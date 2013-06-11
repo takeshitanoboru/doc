@@ -1,0 +1,254 @@
+Ryu rest_firewall
+=================
+
+Introduction
+------------
+
+RyuにはOpenflow Switchをfirewallとして機能させる事ができます。
+ここではfirewallとしての利用方法について記述します。
+
+REST Interface
+--------------
+
+rest_firewallを操作するためのコマンドを以下に示します。
+
+    +------------------------------+------+-------------+----------------+--------------------------------------+------------------------+
+    |            URL               |Method|URL Arguments|      Data      |             Data Fields              |      Description       |
+    +==============================+======+=============+================+======================================+========================+
+    |/firewall/module/status       | GET  |     None    |      None      |                 None                 |Get all switches status |
+    +------------------------------+------+-------------+----------------+--------------------------------------+------------------------+
+    |/firewall/module/{op}/{switch}| PUT  |op:enable,   |      None      |                 None                 |enable and disable      |
+    |                              |      |   disable   |                |                                      |the firewall for all or |
+    |                              |      |switch:all,  |                |                                      |each switches           |
+    |                              |      |   switch_id |                |                                      |                        |
+    +------------------------------+------+-------------+----------------+--------------------------------------+------------------------+
+    |/firewall/rules/{switch}      | GET  |switch:all,  |      None      |                 None                 |List all existing rules |
+    |                              |      |   switch_id |                |                                      |in json format          |
+    |                              +------+-------------+----------------+--------------------------------------+------------------------+
+    |                              | POST |switch:all,  |{"<field1>":    |"field":"value" pairs below in any    |Create new firewall rule|
+    |                              |      |   switch_id | "<value1>",    |order and combination:                |                        |
+    |                              |      |             | "<field2>":    |                                      |                        |
+    |                              |      |             | "<value2>",...}|"priority":"0 to 65553",              |                        |
+    |                              |      |             |                |"in_port":"<int>",                    |                        |
+    |                              |      |             |                |"dl_src":"<xx:xx:xx:xx:xx:xx>",       |                        |
+    |                              |      |             |                |"dl_dst":"<xx:xx:xx:xx:xx:xx>",       |                        |
+    |                              |      |             |                |"dl_type":"<ARP or IPv4>",            |                        |
+    |                              |      |             |                |"nw_src":"<A.B.C.D/M>",               |                        |
+    |                              |      |             |                |"nw_dst":"<A.B.C.D/M>",               |                        |
+    |                              |      |             |                |"nw_proto":"<TCP or UDP or ICMP>",    |                        |
+    |                              |      |             |                |"tp_src":"<int>",                     |                        |
+    |                              |      |             |                |"tp_dst":"<int>",                     |                        |
+    |                              |      |             |                |                                      |                        |
+    |                              |      |             |                |Note: specifying nw_src/nw_dst        |                        |
+    |                              |      |             |                |without specifying dl-type as ARP     |                        |
+    |                              |      |             |                |or IPv4 will automatically set dl-type|                        |
+    |                              |      |             |                |to match IPv4.                        |                        |
+    |                              |      |             |                |                                      |                        |
+    |                              |      |             |                |Note: When "priority" has not been    |                        |
+    |                              |      |             |                |set up, "0" is set to "priority".     |                        |
+    |                              +------+-------------+----------------+--------------------------------------+------------------------+
+    |                              |DELETE|switch:all,  |{"<rule_id>":   |"rule_id":"<int>"                     |Delete a rule by rule_id|
+    |                              |      |   switch_id | "<int>"}       |                                      |                        |
+    |                              |      |             |                |Note: rule_id is generated from cookie|                        |
+    |                              |      |             |                |and returned in the json response upon|                        |
+    |                              |      |             |                |successful creation                   |                        |
+    +------------------------------+------+-------------+----------------+--------------------------------------+------------------------+
+    |/firewall/log/{op}/{switch}   | PUT  |op:enable,   |      None      |                 None                 |enable and disable      |
+    |                              |      |     disable |                |                                      |the logging for all or  |
+    |                              |      |switch:all,  |                |                                      |each switches           |
+    |                              |      |   switch_id |                |                                      |                        |
+    +------------------------------+------+-------------+----------------+--------------------------------------+------------------------+
+
+
+
+Examples using curl
+-------------------
+
+ここでは"switch_id:000000000000001"に対してルールを追加、削除する例を紹介します。
+
+最初にryu-maneger上でrest_firewallを起動させます。
+
+    $ ryu-manager firewall.py
+    flagfile = /etc/ryu/ryu.conf
+    loading app ryu.controller.ofp_handler
+    loading app firewall.py
+    instantiating app firewall.py
+    instantiating app ryu.controller.ofp_handler
+    (22608) wsgi starting up on http://0.0.0.0:8080/
+
+次の表示がされたらRyuとスイッチの間の接続に成功です。
+
+    [FW][INFO] switch_id=0000000000000001: Join as firewall
+
+
+各スイッチに対するfirewallの状態を確認します。
+
+    curl http://localhost:8080/firewall/module/status
+      {
+        "status": "disable",
+        "switch_id": "0000000000000001"
+      }
+
+firewallを有効にします。
+
+    curl -X PUT http://localhost:8080/firewall/module/enable/0000000000000001
+      {
+        "switch_id: 0000000000000001": {
+          "result": "success",
+          "details": "firewall running."
+        }
+      }
+
+    curl http://localhost:8080/firewall/module/status
+      {
+        "status": "enable",
+        "switch_id": "0000000000000001"
+      }
+
+ホストIP 10.0.0.4へのフローを通すルールを追加します。
+
+    curl -X POST -d '{"nw_dst": "10.0.0.4/32"}' http://localhost:8080/firewall/rules/0000000000000001
+      {
+        "switch_id: 0000000000000001": [
+          {
+            "result": "success",
+            "details": "Rule added. : rule_id=1"
+          }
+        ]
+      }
+
+ホストMAC 00:00:00:00:00:01から00:00:00:00:00:02へのフローを通すルールを追加します。
+
+    curl -X POST -d '{"dl_src": "00:00:00:00:00:01", "dl_dst": "00:00:00:00:00:02"}' http://localhost:8080/firewall/rules/0000000000000001
+      {
+        "switch_id: 0000000000000001": [
+          {
+            "result": "success",
+            "details": "Rule added. : rule_id=2"
+          }
+        ]
+      }
+
+ホストIP 172.16.10.0/24とのping(ICMPパケット)を通すルールを追加します。
+
+    curl -X POST -d '{"priority":"100", "nw_src":"172.16.10.0/24", "nw_proto": "ICMP"}' http://localhost:8080/firewall/rules/0000000000000001
+      {
+        "switch_id: 0000000000000001": [
+          {
+            "result": "success",
+            "details": "Rule added. : rule_id=3"
+          }
+        ]
+      }
+
+    curl -X POST -d '{"priority":"100", "nw_dst":"172.16.10.0/24", "nw_proto": "ICMP"}' http://localhost:8080/firewall/rules/0000000000000001
+      {
+        "switch_id: 0000000000000001": [
+          {
+            "result": "success",
+            "details": "Rule added. : rule_id=4"
+          }
+        ]
+      }
+
+設定されているルールを確認します。
+
+    curl http://localhost:8080/firewall/rules/0000000000000001
+      {
+        "access_control_list": [
+          {
+            "rules": [
+              {
+                "priority": 1,
+                "dl_type": "IPv4",
+                "rule_id": 1,
+                "actions": "ALLOW",
+                "nw_dst": "10.0.0.4"
+              },
+              {
+                "priority": 100,
+                "dl_type": "IPv4",
+                "nw_proto": "ICMP",
+                "nw_src": "172.16.10.0/24",
+                "rule_id": 3,
+                "actions": "ALLOW"
+              },
+              {
+                "priority": 1,
+                "dl_dst": "00:00:00:00:00:02",
+                "rule_id": 2,
+                "actions": "ALLOW",
+                "dl_src": "00:00:00:00:00:01"
+              },
+              {
+                "priority": 100,
+                "dl_type": "IPv4",
+                "nw_proto": "ICMP",
+                "nw_dst": "172.16.10.0/24",
+                "rule_id": 4,
+                "actions": "ALLOW"
+              }
+            ]
+          }
+        ],
+        "switch_id": "0000000000000001"
+      }
+
+172.16.10.0/24に所属するホストマシン上で以下を実行し、pingが通ることを確認します。
+
+    host[172.16.10.10] $ ping 192.168.30.10
+
+"rule_id:3"のルールを削除します。
+
+    curl -X DELETE -d '{"rule_id": "3"}' http://localhost:8080/firewall/rules/0000000000000001
+      {
+        "switch_id: 0000000000000001": [
+          {
+            "result": "success",
+            "details": "Rule deleted. : ruleID=3"
+          }
+        ]
+      }
+
+再度ルールを確認します。
+
+    curl http://localhost:8080/firewall/rules/0000000000000001
+      {
+        "access_control_list": [
+          {
+            "rules": [
+              {
+                "priority": 1,
+                "dl_type": "IPv4",
+                "rule_id": 1,
+                "actions": "ALLOW",
+                "nw_dst": "10.0.0.4"
+              },
+              {
+                "priority": 1,
+                "dl_dst": "00:00:00:00:00:02",
+                "rule_id": 2,
+                "actions": "ALLOW",
+                "dl_src": "00:00:00:00:00:01"
+              },
+              {
+                "priority": 100,
+                "dl_type": "IPv4",
+                "nw_proto": "ICMP",
+                "nw_dst": "172.16.10.0/24",
+                "rule_id": 4,
+                "actions": "ALLOW"
+              }
+            ]
+          }
+        ],
+        "switch_id": "0000000000000001"
+      }
+
+172.16.10.0/24に所属するホストマシン上で以下を実行し、pingがfirewallでブロックされることを確認します。
+
+    host[172.16.10.10] $ ping 192.168.30.10
+
+firewallでパケットがブロックされ、以下のようなログが出力されます。
+
+    [FW][BLOCK] switch_id=0000000000000001: ethernet(dst=22:73:e1:be:e2:cb, src=2a:8c:0d:2f:76:5c, ethertype=0x0800), ipv4(version=4, header_length=5, tos=0, total_length=84, identification=0x0, flags=0x2, offset=0, ttl=64, proto=1, csum=0xa5dc, src=172.16.10.10, dst=192.168.30.10, option=), icmp(type=8, code=0, csum=0x2786), data=icmp_echo(id=18887, seq=3), data='\x16\x8f\xb6Q\x00\x00\x00\x00\xf8\xfb\x02\x00\x00\x00\x00\x00\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !"#$%&\'()*+,-./01234567', '\x08\x00\'\x86I\xc7\x00\x03\x16\x8f\xb6Q\x00\x00\x00\x00\xf8\xfb\x02\x00\x00\x00\x00\x00\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !"#$%&\'()*+,-./01234567'
